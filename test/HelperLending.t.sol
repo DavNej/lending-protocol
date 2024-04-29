@@ -60,4 +60,26 @@ abstract contract HelperLending is Test {
 
         assertEq(IERC20(asset).balanceOf(user), userBalance + amount, "withdrawFor helper: Asset balance");
     }
+
+    function borrowFor(address user, address asset, uint256 amount, address collateral, uint256 collateralAmount)
+        public
+        returns (uint256 loanId)
+    {
+        vm.startPrank(user);
+
+        uint256 userAssetBalance = IERC20(asset).balanceOf(user);
+        uint256 userCollateralBalance = IERC20(collateral).balanceOf(user);
+
+        IERC20(collateral).approve(address(s_lending), collateralAmount);
+
+        loanId = s_lending.borrow(asset, amount, collateral, collateralAmount);
+        vm.stopPrank();
+
+        assertEq(IERC20(asset).balanceOf(user), userAssetBalance + amount, "borrowFor helper: User asset balance");
+        assertEq(
+            IERC20(collateral).balanceOf(user),
+            userCollateralBalance - collateralAmount,
+            "borrowFor helper: User collateral balance"
+        );
+    }
 }

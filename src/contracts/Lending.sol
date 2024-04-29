@@ -28,10 +28,16 @@ contract Lending is Ownable, ReentrancyGuard {
 
     mapping(address asset => uint256 ratio) private scaledCollateralRatios;
     mapping(address asset => Pool pool) private pools;
+    mapping(uint256 => Loan) loans;
+    uint256 currLoanId = 1;
+
+    event Borrow(address indexed account, uint256 loanId);
     event Deposit(address indexed account, address asset, uint256 amount);
     event PoolCreated(address asset, address lpToken);
     event Withdraw(address indexed account, address asset, uint256 amount);
 
+    error Lending__CollateralNotAccepted();
+    error Lending__InsufficientCollateral();
     error Lending__InsufficientLPTokens();
     error Lending__NotEnoughLiquidity();
     error Lending__PoolAlreadyExists();
@@ -44,6 +50,18 @@ contract Lending is Ownable, ReentrancyGuard {
         uint256 lastInterestUpdateTime;
         uint256 scaledInterestRate;
         uint256 totalBorrowed;
+    }
+
+    struct Loan {
+        address borrower;
+        // uint256 createdAt;
+        uint256 lastUpdateTimestamp;
+        address asset;
+        uint256 amount;
+        address collateral;
+        uint256 collateralAmount;
+        uint256 scaledBorrowRate;
+        uint256 interestDue;
     }
 
     /**
@@ -180,4 +198,84 @@ contract Lending is Ownable, ReentrancyGuard {
         IERC20(asset).safeTransfer(msg.sender, amount);
 
         emit Withdraw(msg.sender, asset, amount);
+    }
+
+    /**
+     * Borrow an asset from the lending protocol
+     * @param asset address of the token to borrow
+     * @param amount amount of token to borrow
+     * @param collateral address of the token to use as collateral
+     * @param collateralAmount amount of collateral to use
+     */
+    function borrow(address asset, uint256 amount, address collateral, uint256 collateralAmount)
+        external
+        nonReentrant
+        nonZeroAddress(asset)
+        nonZeroAddress(collateral)
+        nonZeroAmount(amount)
+        nonZeroAmount(collateralAmount)
+        poolExists(asset)
+        returns (uint256 loanId)
+    {
+        if (scaledCollateralRatios[collateral] == 0) {
+            revert Lending__CollateralNotAccepted();
+        }
+
+        if (IERC20(asset).balanceOf(address(this)) < amount) {
+            revert Lending__NotEnoughLiquidity();
+        }
+
+        ///@todo collateral exchange rate to be determined. For now it is set to 1:1
+        uint256 scaledCollateralExchangeRate = 100 * SCALING_FACTOR / 100;
+
+        if (collateralAmount * scaledCollateralExchangeRate < amount * scaledCollateralRatios[collateral]) {
+            revert Lending__InsufficientCollateral();
+        }
+
+        Loan memory loan = Loan({
+            borrower: msg.sender,
+            lastUpdateTimestamp: block.timestamp,
+            asset: asset,
+            amount: amount,
+            collateral: collateral,
+            collateralAmount: collateralAmount,
+            ///@dev Fixed borrow rate. Set when loan is taken
+            scaledBorrowRate: pools[asset].scaledInterestRate,
+            interestDue: 0
+        });
+
+        loans[currLoanId] = loan;
+        loanId = currLoanId;
+        currLoanId++;
+
+        pools[asset].totalBorrowed += amount;
+
+        IERC20(collateral).safeTransferFrom(msg.sender, address(this), collateralAmount);
+        IERC20(asset).safeTransfer(msg.sender, amount);
+
+        emit Borrow(msg.sender, loanId);
+    }
+
+    /**
+     * @notice Get the scaled collateral ratio for a given asset
+     * @param asset address of the token to get the collateral ratio for
+     */
+    function getScaledCollateralRatio(address asset) external view returns (uint256) {
+        return scaledCollateralRatios[asset];
+    }
+
+    /**
+     * @notice Get the pool for a given asset
+     * @param asset address of the token to get the pool for
+     */
+    function getPool(address asset) external view returns (Pool memory) {
+        return pools[asset];
+    }
+
+    /**
+     * @notice retrieve a loan from its ID
+     * @param loanId The ID of the loan to retrieve
+     */
+    function getLoan(uint256 loanId) external view returns (Loan memory) {
+        return loans[loanId];
     }

@@ -184,4 +184,109 @@ contract LendingTest is HelperLending {
         assertEq(lpToken.balanceOf(ALICE), amountToDeposit - amountToWithdraw, "LPToken balance not updated");
         assertEq(lpToken.totalSupply(), amountToDeposit - amountToWithdraw, "LPToken total supply not updated");
     }
+
+    function testBorrow__ZeroAmount() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 10 ether;
+        uint256 amountToBorrow = 0 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 10 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+
+        vm.startPrank(BOB);
+        vm.expectRevert(Lending.Lending__ZeroAmount.selector);
+        s_lending.borrow(assetToBorrow, amountToBorrow, collateral, collateralAmount);
+        vm.stopPrank();
+    }
+
+    function testBorrow__PoolNotFound() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 10 ether;
+        uint256 amountToBorrow = 10 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 10 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+
+        vm.startPrank(BOB);
+        vm.expectRevert(Lending.Lending__PoolNotFound.selector);
+        s_lending.borrow(s_wdoge, amountToBorrow, collateral, collateralAmount);
+        vm.stopPrank();
+    }
+
+    function testBorrow__NotEnoughLiquidity() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 10 ether;
+        uint256 amountToBorrow = 100 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 200 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+
+        vm.startPrank(BOB);
+        ILPToken lpToken = ILPToken(s_lending.getPool(s_usdc).lpTokenAddress);
+        lpToken.approve(address(s_lending), amountToBorrow);
+
+        vm.expectRevert(Lending.Lending__NotEnoughLiquidity.selector);
+        s_lending.borrow(assetToBorrow, amountToBorrow, collateral, collateralAmount);
+        vm.stopPrank();
+    }
+
+    function testBorrow__Success() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToBorrow = 10 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 20 ether;
+        uint256 assetAmountInContract = 100 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+        depositFor(ALICE, assetToBorrow, assetAmountInContract);
+
+        vm.startPrank(BOB);
+        IERC20(collateral).approve(address(s_lending), collateralAmount);
+
+        uint256 expectedLoanId = 1;
+        vm.expectEmit(true, true, true, true);
+        emit Lending.Borrow(BOB, expectedLoanId);
+        uint256 loanId = s_lending.borrow(assetToBorrow, amountToBorrow, collateral, collateralAmount);
+        vm.stopPrank();
+
+        assertEq(expectedLoanId, loanId);
+
+        assertEq(IERC20(assetToBorrow).balanceOf(BOB), amountToBorrow, "User assetToBorrow balance not updated");
+        assertEq(
+            IERC20(assetToBorrow).balanceOf(address(s_lending)),
+            assetAmountInContract - amountToBorrow,
+            "Contract assetToBorrow balance not updated"
+        );
+        assertEq(
+            IERC20(collateral).balanceOf(BOB),
+            INITIAL_BOB_BALANCE - collateralAmount,
+            "User collateral balance not updated"
+        );
+        assertEq(
+            IERC20(collateral).balanceOf(address(s_lending)),
+            collateralAmount,
+            "Contract collateral balance not updated"
+        );
+
+        assertEq(s_lending.getLoan(expectedLoanId).borrower, BOB);
+        assertEq(s_lending.getLoan(expectedLoanId).lastUpdateTimestamp, block.timestamp);
+        assertEq(s_lending.getLoan(expectedLoanId).asset, assetToBorrow);
+        assertEq(s_lending.getLoan(expectedLoanId).amount, amountToBorrow);
+        assertEq(s_lending.getLoan(expectedLoanId).collateral, collateral);
+        assertEq(s_lending.getLoan(expectedLoanId).collateralAmount, collateralAmount);
+        assertEq(
+            s_lending.getLoan(expectedLoanId).scaledBorrowRate, s_lending.getPool(assetToBorrow).scaledInterestRate
+        );
+        assertEq(s_lending.getPool(assetToBorrow).totalBorrowed, amountToBorrow);
+    }
 }
