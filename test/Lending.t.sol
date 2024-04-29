@@ -435,6 +435,219 @@ contract LendingTest is HelperLending {
             "Loan collateral amount not updated"
         );
     }
+
+    function testRepay__ZeroAmount() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 100 ether;
+        uint256 amountToBorrow = 50 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 100 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.startPrank(BOB);
+        vm.expectRevert(Lending.Lending__ZeroAmount.selector);
+        s_lending.repay(loanId, 0);
+        vm.stopPrank();
+    }
+
+    function testRepay__LoanNotFound() public {
+        vm.startPrank(BOB);
+        vm.expectRevert(Lending.Lending__LoanNotFound.selector);
+        s_lending.repay(7, 10 ether);
+        vm.stopPrank();
+    }
+
+    function testRepay__Success__FullRepay() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToBorrow = 100 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 200 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToBorrow);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.warp(block.timestamp + (2 * 365 days));
+        s_lending.updateLoanInterest(loanId);
+
+        uint256 interestDue = s_lending.getLoan(loanId).interestDue;
+        uint256 amount = s_lending.getLoan(loanId).amount;
+        uint256 repayAmount = amount + interestDue;
+
+        vm.startPrank(s_deployer);
+        IERC20(assetToBorrow).transfer(BOB, interestDue);
+        vm.stopPrank();
+        assertEq(IERC20(assetToBorrow).balanceOf(BOB), repayAmount);
+
+        vm.startPrank(BOB);
+        IERC20(assetToBorrow).approve(address(s_lending), repayAmount);
+        vm.expectEmit(true, true, true, true);
+        emit Lending.LoanClosed(loanId);
+        emit Lending.Repay(loanId, repayAmount);
+        s_lending.repay(loanId, repayAmount);
+        vm.stopPrank();
+
+        assertEq(IERC20(assetToBorrow).balanceOf(BOB), 0, "User assetToBorrow balance not updated");
+
+        assertEq(
+            IERC20(assetToBorrow).balanceOf(address(s_lending)),
+            repayAmount,
+            "Contract assetToBorrow balance not updated"
+        );
+        assertEq(IERC20(collateral).balanceOf(address(s_lending)), 0, "Contract collateral balance not updated");
+        assertEq(IERC20(collateral).balanceOf(BOB), INITIAL_BOB_BALANCE, "User collateral balance not updated");
+
+        assertEq(s_lending.getLoan(loanId).amount, 0, "Loan amount not updated");
+        assertEq(s_lending.getLoan(loanId).collateralAmount, 0, "Loan collateral amount not updated");
+        assertEq(s_lending.getPool(assetToBorrow).totalBorrowed, 0, "Pool total borrowed not updated");
+    }
+
+    function testFail__RepayPartial__LoanClosedNotEmitted() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 100 ether;
+        uint256 amountToBorrow = 50 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 100 ether;
+        uint256 repayAmount = 25 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.startPrank(BOB);
+        IERC20(assetToBorrow).approve(address(s_lending), repayAmount);
+        vm.expectEmit(true, true, true, true);
+        emit Lending.LoanClosed(loanId);
+        vm.stopPrank();
+    }
+
+    function testRepay__Success__LessThanInterest() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToBorrow = 100 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 200 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToBorrow);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.warp(block.timestamp + (2 * 365 days));
+        s_lending.updateLoanInterest(loanId);
+
+        uint256 interestDue = s_lending.getLoan(loanId).interestDue;
+        uint256 interestDifference = 10 gwei;
+        assertGt(interestDue, interestDifference);
+        uint256 repayAmount = interestDue - interestDifference;
+
+        vm.startPrank(BOB);
+        IERC20(assetToBorrow).approve(address(s_lending), repayAmount);
+        vm.expectEmit(true, true, true, true);
+        emit Lending.Repay(loanId, repayAmount);
+        s_lending.repay(loanId, repayAmount);
+        vm.stopPrank();
+
+        assertEq(
+            IERC20(assetToBorrow).balanceOf(BOB), amountToBorrow - repayAmount, "User assetToBorrow balance not updated"
+        );
+
+        assertEq(
+            IERC20(assetToBorrow).balanceOf(address(s_lending)),
+            repayAmount,
+            "Contract assetToBorrow balance not updated"
+        );
+        assertEq(
+            IERC20(collateral).balanceOf(BOB),
+            INITIAL_BOB_BALANCE - collateralAmount,
+            "User collateral balance should not be updated"
+        );
+        assertEq(
+            IERC20(collateral).balanceOf(address(s_lending)),
+            collateralAmount,
+            "Contract collateral balance should not be updated"
+        );
+
+        assertEq(s_lending.getLoan(loanId).amount, amountToBorrow, "Loan amount should not be updated");
+        assertEq(
+            s_lending.getLoan(loanId).collateralAmount, collateralAmount, "Loan collateral amount should not be updated"
+        );
+
+        assertEq(s_lending.getLoan(loanId).interestDue, interestDifference, "Loan InterestDue not updated");
+
+        assertEq(
+            s_lending.getPool(assetToBorrow).totalBorrowed, amountToBorrow, "Pool total borrowed should not be updated"
+        );
+    }
+
+    function testRepay__Success__MoreThanInterest() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToBorrow = 100 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 200 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToBorrow);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.warp(block.timestamp + (2 * 365 days));
+        s_lending.updateLoanInterest(loanId);
+
+        uint256 interestDue = s_lending.getLoan(loanId).interestDue;
+        uint256 interestAddition = 10 gwei;
+        uint256 repayAmount = interestDue + interestAddition;
+
+        vm.startPrank(BOB);
+        IERC20(assetToBorrow).approve(address(s_lending), repayAmount);
+        vm.expectEmit(true, true, true, true);
+        emit Lending.Repay(loanId, repayAmount);
+        s_lending.repay(loanId, repayAmount);
+        vm.stopPrank();
+
+        assertEq(
+            IERC20(assetToBorrow).balanceOf(BOB), amountToBorrow - repayAmount, "User assetToBorrow balance not updated"
+        );
+
+        assertEq(
+            IERC20(assetToBorrow).balanceOf(address(s_lending)),
+            repayAmount,
+            "Contract assetToBorrow balance not updated"
+        );
+        assertEq(
+            IERC20(collateral).balanceOf(BOB),
+            INITIAL_BOB_BALANCE - collateralAmount,
+            "User collateral balance should not be updated"
+        );
+        assertEq(
+            IERC20(collateral).balanceOf(address(s_lending)),
+            collateralAmount,
+            "Contract collateral balance should not be updated"
+        );
+
+        assertEq(s_lending.getLoan(loanId).amount, amountToBorrow - interestAddition, "Loan amount not updated");
+        assertEq(
+            s_lending.getLoan(loanId).collateralAmount, collateralAmount, "Loan collateral amount should not be updated"
+        );
+
+        assertEq(s_lending.getLoan(loanId).interestDue, 0, "Loan InterestDue not updated");
+
+        assertEq(
+            s_lending.getPool(assetToBorrow).totalBorrowed,
+            amountToBorrow - interestAddition,
+            "Pool total borrowed not updated"
+        );
+    }
     function testUpdateLoanInterest__LoanNotFound() public {
         vm.expectRevert(Lending.Lending__LoanNotFound.selector);
         s_lending.updateLoanInterest(7);

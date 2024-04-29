@@ -35,7 +35,9 @@ contract Lending is Ownable, ReentrancyGuard {
     event CollateralAdded(uint256 loanId, uint256 amount);
     event CollateralRemoved(uint256 loanId, uint256 amount);
     event Deposit(address indexed account, address asset, uint256 amount);
+    event LoanClosed(uint256 loanId);
     event PoolCreated(address asset, address lpToken);
+    event Repay(uint256 loanId, uint256 amount);
     event Withdraw(address indexed account, address asset, uint256 amount);
 
     error Lending__CollateralNotAccepted();
@@ -324,6 +326,49 @@ contract Lending is Ownable, ReentrancyGuard {
         loans[loanId] = loan;
 
         emit CollateralRemoved(loanId, collateralAmountToRemove);
+    }
+
+    function repay(uint256 loanId, uint256 amount) external nonReentrant nonZeroAmount(amount) loanExists(loanId) {
+        Loan memory loan = loans[loanId];
+
+        ///@todo user should call updateLoanInterest in order to know the total amount to fully repay the loan. UX should be improved !
+        updateLoanInterest(loanId);
+
+        if (amount >= loan.amount + loan.interestDue) {
+            IERC20(loan.asset).safeTransferFrom(msg.sender, address(this), loan.amount + loan.interestDue);
+
+            uint256 collateralAmountToTransfer = loan.collateralAmount;
+
+            pools[loan.asset].totalBorrowed -= loan.amount;
+
+            loan.interestDue = 0;
+            loan.amount = 0;
+            loan.collateralAmount = 0;
+
+            loans[loanId] = loan;
+
+            IERC20(loan.collateral).safeTransfer(msg.sender, collateralAmountToTransfer);
+
+            emit Repay(loanId, amount);
+            emit LoanClosed(loanId);
+        } else if (amount > loan.interestDue) {
+            IERC20(loan.asset).safeTransferFrom(msg.sender, address(this), amount);
+
+            pools[loan.asset].totalBorrowed -= amount - loan.interestDue;
+
+            loan.amount -= amount - loan.interestDue;
+            loan.interestDue = 0;
+            loans[loanId] = loan;
+
+            emit Repay(loanId, amount);
+        } else {
+            IERC20(loan.asset).safeTransferFrom(msg.sender, address(this), amount);
+
+            loan.interestDue -= amount;
+            loans[loanId] = loan;
+
+            emit Repay(loanId, amount);
+        }
     }
 
     /**
