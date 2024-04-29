@@ -35,6 +35,7 @@ contract Lending is Ownable, ReentrancyGuard {
     event CollateralAdded(uint256 loanId, uint256 amount);
     event CollateralRemoved(uint256 loanId, uint256 amount);
     event Deposit(address indexed account, address asset, uint256 amount);
+    event Liquidated(address indexed liquidater, uint256 loanId);
     event LoanClosed(uint256 loanId);
     event PoolCreated(address asset, address lpToken);
     event Repay(uint256 loanId, uint256 amount);
@@ -43,6 +44,7 @@ contract Lending is Ownable, ReentrancyGuard {
     error Lending__CollateralNotAccepted();
     error Lending__InsufficientCollateral();
     error Lending__InsufficientLPTokens();
+    error Lending__LiquidationForbidden();
     error Lending__LoanNotFound();
     error Lending__NotEnoughLiquidity();
     error Lending__PoolAlreadyExists();
@@ -369,6 +371,42 @@ contract Lending is Ownable, ReentrancyGuard {
 
             emit Repay(loanId, amount);
         }
+    }
+
+    /**
+     * @notice Liquidate a loan
+     * @param loanId The ID of the loan to liquidate
+     */
+    function liquidate(uint256 loanId) external nonReentrant loanExists(loanId) {
+        Loan memory loan = loans[loanId];
+
+        updateLoanInterest(loanId);
+
+        ///@todo collateral exchange rate to be determined. For now it is set to 1:1
+        uint256 scaledCollateralExchangeRate = 100 * SCALING_FACTOR / 100;
+
+        if (
+            loan.collateralAmount * scaledCollateralExchangeRate
+                > (loan.amount + loan.interestDue) * scaledCollateralRatios[loan.collateral]
+        ) {
+            revert Lending__LiquidationForbidden();
+        }
+
+        IERC20(loan.asset).safeTransferFrom(msg.sender, address(this), loan.amount + loan.interestDue);
+
+        uint256 collateralAmountToTransfer = loan.collateralAmount;
+
+        pools[loan.asset].totalBorrowed -= loan.amount;
+
+        loan.interestDue = 0;
+        loan.amount = 0;
+        loan.collateralAmount = 0;
+
+        loans[loanId] = loan;
+
+        IERC20(loan.collateral).safeTransfer(msg.sender, collateralAmountToTransfer);
+
+        emit Liquidated(msg.sender, loanId);
     }
 
     /**

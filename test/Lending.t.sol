@@ -648,6 +648,82 @@ contract LendingTest is HelperLending {
             "Pool total borrowed not updated"
         );
     }
+
+    function testLiquidate__LoanNotFound() public {
+        vm.startPrank(BOB);
+        vm.expectRevert(Lending.Lending__LoanNotFound.selector);
+        s_lending.liquidate(7);
+        vm.stopPrank();
+    }
+
+    function testLiquidate__LiquidationForbidden() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 100 ether;
+        uint256 amountToBorrow = 50 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 100 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.startPrank(CHARLES);
+        vm.expectRevert(Lending.Lending__LiquidationForbidden.selector);
+        s_lending.liquidate(loanId);
+        vm.stopPrank();
+    }
+
+    function testLiquidate__Success() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToBorrow = 100 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 180 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToBorrow);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.warp(block.timestamp + (2 * 365 days));
+        s_lending.updateLoanInterest(loanId);
+
+        uint256 interestDue = s_lending.getLoan(loanId).interestDue;
+        uint256 repayAmount = amountToBorrow + interestDue;
+
+        fundUserWithToken(CHARLES, assetToBorrow, repayAmount);
+
+        vm.startPrank(CHARLES);
+        IERC20(assetToBorrow).approve(address(s_lending), repayAmount);
+        vm.expectEmit(true, true, true, true);
+        emit Lending.Liquidated(CHARLES, loanId);
+        s_lending.liquidate(loanId);
+        vm.stopPrank();
+
+        assertEq(
+            IERC20(assetToBorrow).balanceOf(BOB), amountToBorrow, "Borrower assetToBorrow balance should not be updated"
+        );
+
+        assertEq(
+            IERC20(assetToBorrow).balanceOf(address(s_lending)),
+            repayAmount,
+            "Contract assetToBorrow balance not updated"
+        );
+        assertEq(IERC20(collateral).balanceOf(address(s_lending)), 0, "Contract collateral balance not updated");
+        assertEq(
+            IERC20(collateral).balanceOf(BOB),
+            INITIAL_BOB_BALANCE - collateralAmount,
+            "Borrower collateral balance not updated"
+        );
+        assertEq(IERC20(collateral).balanceOf(CHARLES), collateralAmount, "Liquidater collateral balance not updated");
+
+        assertEq(s_lending.getLoan(loanId).amount, 0, "Loan amount not updated");
+        assertEq(s_lending.getLoan(loanId).collateralAmount, 0, "Loan collateral amount not updated");
+        assertEq(s_lending.getPool(assetToBorrow).totalBorrowed, 0, "Pool total borrowed not updated");
+    }
+
     function testUpdateLoanInterest__LoanNotFound() public {
         vm.expectRevert(Lending.Lending__LoanNotFound.selector);
         s_lending.updateLoanInterest(7);
