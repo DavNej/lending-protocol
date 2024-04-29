@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
+import {LPToken} from "src/contracts/LPToken.sol";
 import {LPTokenFactory} from "src/contracts/LPTokenFactory.sol";
 import {ILPToken} from "src/interfaces/ILPToken.sol";
 
@@ -29,6 +30,10 @@ contract Lending is Ownable, ReentrancyGuard {
     mapping(address asset => Pool pool) private pools;
     event Deposit(address indexed account, address asset, uint256 amount);
     event PoolCreated(address asset, address lpToken);
+    event Withdraw(address indexed account, address asset, uint256 amount);
+
+    error Lending__InsufficientLPTokens();
+    error Lending__NotEnoughLiquidity();
     error Lending__PoolAlreadyExists();
     error Lending__PoolNotFound();
     error Lending__ZeroAddress();
@@ -148,4 +153,31 @@ contract Lending is Ownable, ReentrancyGuard {
         emit Deposit(msg.sender, asset, amount);
 
         return lpTokensToMint;
+    }
+
+    /**
+     * @notice Withdraw asset from the lending protocol
+     * @param asset The address of the token to withdraw
+     * @param amount The amount of token to withdraw
+     */
+    function withdraw(address asset, uint256 amount) external nonReentrant nonZeroAmount(amount) poolExists(asset) {
+        address lpTokenAddress = pools[asset].lpTokenAddress;
+
+        uint256 totalAssetBalance = IERC20(asset).balanceOf(address(this));
+
+        if (amount > totalAssetBalance) {
+            revert Lending__NotEnoughLiquidity();
+        }
+
+        uint256 totalLPTokens = LPToken(lpTokenAddress).totalSupply();
+        uint256 lpTokensToBurn = (amount * totalLPTokens) / totalAssetBalance;
+
+        if (LPToken(lpTokenAddress).balanceOf(msg.sender) < lpTokensToBurn) {
+            revert Lending__InsufficientLPTokens();
+        }
+
+        LPToken(lpTokenAddress).burn(msg.sender, lpTokensToBurn);
+        IERC20(asset).safeTransfer(msg.sender, amount);
+
+        emit Withdraw(msg.sender, asset, amount);
     }

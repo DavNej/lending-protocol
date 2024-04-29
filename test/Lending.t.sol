@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
+
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 
 import {DeployLending} from "script/DeployLending.s.sol";
@@ -103,5 +104,84 @@ contract LendingTest is HelperLending {
         );
         assertEq(ILPToken(lpToken).balanceOf(ALICE), minted, "LPToken balance not updated");
         assertEq(ILPToken(lpToken).totalSupply(), minted, "LPToken total supply not updated");
+    }
+
+    function testWithdraw__PoolNotFound() public {
+        vm.expectRevert(Lending.Lending__PoolNotFound.selector);
+        s_lending.withdraw(s_usdc, 10 ether);
+    }
+
+    function testWithdraw__ZeroAmount() public {
+        address asset = s_usdc;
+        uint256 amountToDeposit = 10 ether;
+        uint256 amountToWithdraw = 0 ether;
+
+        fundUserWithToken(ALICE, asset, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, asset, amountToDeposit);
+
+        vm.startPrank(ALICE);
+        vm.expectRevert(Lending.Lending__ZeroAmount.selector);
+        s_lending.withdraw(asset, amountToWithdraw);
+        vm.stopPrank();
+    }
+
+    function testWithdraw__NotEnoughLiquidity() public {
+        address asset = s_usdc;
+        uint256 amountToDeposit = 10 ether;
+        uint256 amountToWithdraw = 100 ether;
+
+        fundUserWithToken(ALICE, asset, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, asset, amountToDeposit);
+
+        vm.startPrank(ALICE);
+        ILPToken lpToken = ILPToken(s_lending.getPool(asset).lpTokenAddress);
+        lpToken.approve(address(s_lending), amountToWithdraw);
+
+        vm.expectRevert(Lending.Lending__NotEnoughLiquidity.selector);
+        s_lending.withdraw(asset, amountToWithdraw);
+        vm.stopPrank();
+    }
+
+    function testWithdraw__InsufficientLPTokens() public {
+        address asset = s_usdc;
+        uint256 amountToDeposit = 100 ether;
+        uint256 amountToWithdraw = 10 ether;
+
+        fundUserWithToken(ALICE, asset, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, asset, amountToDeposit);
+
+        vm.startPrank(BOB);
+        ILPToken lpToken = ILPToken(s_lending.getPool(asset).lpTokenAddress);
+        lpToken.approve(address(s_lending), amountToWithdraw);
+
+        vm.expectRevert(Lending.Lending__InsufficientLPTokens.selector);
+        s_lending.withdraw(asset, amountToWithdraw);
+        vm.stopPrank();
+    }
+
+    function testWithdraw__Success() public {
+        address asset = s_usdc;
+        uint256 amountToDeposit = 100 ether;
+        uint256 amountToWithdraw = 10 ether;
+
+        fundUserWithToken(ALICE, asset, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, asset, amountToDeposit);
+
+        uint256 aliceTokenBalance = INITIAL_ALICE_BALANCE - amountToDeposit;
+
+        vm.startPrank(ALICE);
+        ILPToken lpToken = ILPToken(s_lending.getPool(asset).lpTokenAddress);
+        lpToken.approve(address(s_lending), amountToWithdraw);
+
+        vm.expectEmit(true, true, true, true);
+        emit Lending.Withdraw(ALICE, asset, amountToWithdraw);
+        s_lending.withdraw(asset, amountToWithdraw);
+        vm.stopPrank();
+
+        aliceTokenBalance += amountToWithdraw;
+
+        assertEq(IERC20(asset).balanceOf(ALICE), aliceTokenBalance, "Asset balance not updated");
+        assertEq(lpToken.balanceOf(ALICE), amountToDeposit - amountToWithdraw, "LPToken balance not updated");
+        assertEq(lpToken.totalSupply(), amountToDeposit - amountToWithdraw, "LPToken total supply not updated");
     }
 }

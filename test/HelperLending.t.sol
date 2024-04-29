@@ -46,4 +46,18 @@ abstract contract HelperLending is Test {
 
         assertEq(ILPToken(lpTokenAddress).balanceOf(user), minted, "depositFor helper: LPToken balance");
     }
+
+    function withdrawFor(address user, address asset, uint256 amount) public {
+        vm.startPrank(user);
+
+        uint256 userBalance = IERC20(asset).balanceOf(user);
+
+        ILPToken lpToken = ILPToken(s_lending.getPool(asset).lpTokenAddress);
+        lpToken.approve(address(s_lending), amount);
+
+        s_lending.withdraw(asset, amount);
+        vm.stopPrank();
+
+        assertEq(IERC20(asset).balanceOf(user), userBalance + amount, "withdrawFor helper: Asset balance");
+    }
 }
