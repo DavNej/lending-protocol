@@ -352,4 +352,118 @@ contract LendingTest is HelperLending {
             "Loan collateral amount not updated"
         );
     }
+
+    function testRemoveCollateral__ZeroAmount() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 100 ether;
+        uint256 amountToBorrow = 50 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 100 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.startPrank(BOB);
+        vm.expectRevert(Lending.Lending__ZeroAmount.selector);
+        s_lending.addCollateral(loanId, 0);
+        vm.stopPrank();
+    }
+
+    function testRemoveCollateral__LoanNotFound() public {
+        vm.startPrank(BOB);
+        vm.expectRevert(Lending.Lending__LoanNotFound.selector);
+        s_lending.addCollateral(7, 10 ether);
+        vm.stopPrank();
+    }
+
+    function testRemoveCollateral__InsufficientCollateral() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 100 ether;
+        uint256 amountToBorrow = 50 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 100 ether;
+        uint256 collateralAmountToRemove = 90 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.startPrank(BOB);
+        vm.expectRevert(Lending.Lending__InsufficientCollateral.selector);
+        s_lending.removeCollateral(loanId, collateralAmountToRemove);
+        vm.stopPrank();
+    }
+
+    function testRemoveCollateral__Success() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 100 ether;
+        uint256 amountToBorrow = 50 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 100 ether;
+        uint256 collateralAmountToRemove = 5 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.startPrank(BOB);
+        vm.expectEmit(true, true, true, true);
+        emit Lending.CollateralRemoved(loanId, collateralAmountToRemove);
+        s_lending.removeCollateral(loanId, collateralAmountToRemove);
+        vm.stopPrank();
+
+        assertEq(
+            IERC20(collateral).balanceOf(address(s_lending)),
+            collateralAmount - collateralAmountToRemove,
+            "Contract collateral balance not updated"
+        );
+        assertEq(
+            IERC20(collateral).balanceOf(BOB),
+            INITIAL_BOB_BALANCE - collateralAmount + collateralAmountToRemove,
+            "User collateral balance not updated"
+        );
+        assertEq(
+            s_lending.getLoan(loanId).collateralAmount,
+            collateralAmount - collateralAmountToRemove,
+            "Loan collateral amount not updated"
+        );
+    }
+    function testUpdateLoanInterest__LoanNotFound() public {
+        vm.expectRevert(Lending.Lending__LoanNotFound.selector);
+        s_lending.updateLoanInterest(7);
+    }
+
+    function testUpdateLoanInterest__Success() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 100 ether;
+        uint256 amountToBorrow = 50 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 100 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        uint256 dday = block.timestamp + 365 days;
+        vm.warp(dday);
+
+        uint256 interestDue = s_lending.updateLoanInterest(loanId);
+
+        assertEq(
+            interestDue,
+            amountToBorrow * s_lending.getLoan(loanId).scaledBorrowRate / s_lending.SCALING_FACTOR(),
+            "Interest rate not updated"
+        );
+        assertEq(interestDue, s_lending.getLoan(loanId).interestDue, "Loan interest due not updated");
+        assertEq(s_lending.getLoan(loanId).lastUpdateTimestamp, dday, "Last interest update time not updated");
+    }
 }

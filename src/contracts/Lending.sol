@@ -33,6 +33,7 @@ contract Lending is Ownable, ReentrancyGuard {
 
     event Borrow(address indexed account, uint256 loanId);
     event CollateralAdded(uint256 loanId, uint256 amount);
+    event CollateralRemoved(uint256 loanId, uint256 amount);
     event Deposit(address indexed account, address asset, uint256 amount);
     event PoolCreated(address asset, address lpToken);
     event Withdraw(address indexed account, address asset, uint256 amount);
@@ -293,6 +294,39 @@ contract Lending is Ownable, ReentrancyGuard {
     }
 
     /**
+     * @notice Decrease the collateral amount of a loan
+     * @param loanId The ID of the loan to remove collateral from
+     * @param collateralAmountToRemove The amount of collateral to remove
+     */
+    function removeCollateral(uint256 loanId, uint256 collateralAmountToRemove)
+        external
+        nonReentrant
+        nonZeroAmount(collateralAmountToRemove)
+        loanExists(loanId)
+    {
+        Loan memory loan = loans[loanId];
+
+        updateLoanInterest(loanId);
+
+        ///@todo collateral exchange rate to be determined. For now it is set to 1:1
+        uint256 scaledCollateralExchangeRate = 100 * SCALING_FACTOR / 100;
+
+        if (
+            (loan.collateralAmount - collateralAmountToRemove) * scaledCollateralExchangeRate
+                < (loan.amount + loan.interestDue) * scaledCollateralRatios[loan.collateral]
+        ) {
+            revert Lending__InsufficientCollateral();
+        }
+
+        IERC20(loan.collateral).safeTransfer(msg.sender, collateralAmountToRemove);
+
+        loan.collateralAmount -= collateralAmountToRemove;
+        loans[loanId] = loan;
+
+        emit CollateralRemoved(loanId, collateralAmountToRemove);
+    }
+
+    /**
      * @notice Get the scaled collateral ratio for a given asset
      * @param asset address of the token to get the collateral ratio for
      */
@@ -314,4 +348,26 @@ contract Lending is Ownable, ReentrancyGuard {
      */
     function getLoan(uint256 loanId) external view returns (Loan memory) {
         return loans[loanId];
+    }
+
+    /**
+     * Calculate interest owed on a loan since its last update and update the values. Interest calculation is linear with a day basis
+     * @param loanId The ID of the loan to calculate interest for
+     * @return The amount of interest due
+     */
+    function updateLoanInterest(uint256 loanId) public loanExists(loanId) returns (uint256) {
+        Loan memory loan = loans[loanId];
+
+        uint256 timeElapsedInDays = (block.timestamp - loan.lastUpdateTimestamp) / 1 days;
+
+        if (timeElapsedInDays == 0) {
+            return 0;
+        }
+
+        loan.interestDue = loan.amount * loan.scaledBorrowRate * timeElapsedInDays / (SCALING_FACTOR * 365);
+        loan.lastUpdateTimestamp = block.timestamp;
+
+        loans[loanId] = loan;
+
+        return loan.interestDue;
     }
