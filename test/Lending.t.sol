@@ -289,4 +289,67 @@ contract LendingTest is HelperLending {
         );
         assertEq(s_lending.getPool(assetToBorrow).totalBorrowed, amountToBorrow);
     }
+
+    function testAddCollateral__ZeroAmount() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 100 ether;
+        uint256 amountToBorrow = 50 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 100 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+        fundUserWithToken(BOB, collateral, INITIAL_ALICE_BALANCE);
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.startPrank(BOB);
+        vm.expectRevert(Lending.Lending__ZeroAmount.selector);
+        s_lending.addCollateral(loanId, 0);
+        vm.stopPrank();
+    }
+
+    function testAddCollateral__LoanNotFound() public {
+        vm.startPrank(BOB);
+        vm.expectRevert(Lending.Lending__LoanNotFound.selector);
+        s_lending.addCollateral(7, 10 ether);
+        vm.stopPrank();
+    }
+
+    function testAddCollateral__Success() public {
+        address assetToBorrow = s_usdc;
+        uint256 amountToDeposit = 100 ether;
+        uint256 amountToBorrow = 50 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 100 ether;
+        uint256 collateralAmountToAdd = 5 ether;
+
+        fundUserWithToken(ALICE, assetToBorrow, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, assetToBorrow, amountToDeposit);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, assetToBorrow, amountToBorrow, collateral, collateralAmount);
+
+        vm.startPrank(BOB);
+        IERC20(collateral).approve(address(s_lending), collateralAmountToAdd);
+        vm.expectEmit(true, true, true, true);
+        emit Lending.CollateralAdded(loanId, collateralAmountToAdd);
+        s_lending.addCollateral(loanId, collateralAmountToAdd);
+        vm.stopPrank();
+
+        assertEq(
+            IERC20(collateral).balanceOf(address(s_lending)),
+            collateralAmount + collateralAmountToAdd,
+            "Contract collateral balance not updated"
+        );
+        assertEq(
+            IERC20(collateral).balanceOf(BOB),
+            INITIAL_BOB_BALANCE - collateralAmount - collateralAmountToAdd,
+            "User collateral balance not updated"
+        );
+        assertEq(
+            s_lending.getLoan(loanId).collateralAmount,
+            collateralAmount + collateralAmountToAdd,
+            "Loan collateral amount not updated"
+        );
+    }
 }

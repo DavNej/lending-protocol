@@ -32,6 +32,7 @@ contract Lending is Ownable, ReentrancyGuard {
     uint256 currLoanId = 1;
 
     event Borrow(address indexed account, uint256 loanId);
+    event CollateralAdded(uint256 loanId, uint256 amount);
     event Deposit(address indexed account, address asset, uint256 amount);
     event PoolCreated(address asset, address lpToken);
     event Withdraw(address indexed account, address asset, uint256 amount);
@@ -39,6 +40,7 @@ contract Lending is Ownable, ReentrancyGuard {
     error Lending__CollateralNotAccepted();
     error Lending__InsufficientCollateral();
     error Lending__InsufficientLPTokens();
+    error Lending__LoanNotFound();
     error Lending__NotEnoughLiquidity();
     error Lending__PoolAlreadyExists();
     error Lending__PoolNotFound();
@@ -82,6 +84,17 @@ contract Lending is Ownable, ReentrancyGuard {
     modifier nonZeroAddress(address _address) {
         if (_address == address(0)) {
             revert Lending__ZeroAddress();
+        }
+        _;
+    }
+
+    /**
+     * @notice Modifier to check if a loan exists
+     * @param loanId The ID of the loan to check
+     */
+    modifier loanExists(uint256 loanId) {
+        if (loans[loanId].asset == address(0)) {
+            revert Lending__LoanNotFound();
         }
         _;
     }
@@ -254,6 +267,29 @@ contract Lending is Ownable, ReentrancyGuard {
         IERC20(asset).safeTransfer(msg.sender, amount);
 
         emit Borrow(msg.sender, loanId);
+    }
+
+    /**
+     * @notice Increase the collateral amount of a loan
+     * @param loanId The ID of the loan to add collateral to
+     * @param collateralAmountToAdd The amount of collateral to add
+     */
+    function addCollateral(uint256 loanId, uint256 collateralAmountToAdd)
+        external
+        nonReentrant
+        nonZeroAmount(collateralAmountToAdd)
+        loanExists(loanId)
+    {
+        Loan memory loan = loans[loanId];
+
+        updateLoanInterest(loanId);
+
+        IERC20(loan.collateral).safeTransferFrom(msg.sender, address(this), collateralAmountToAdd);
+
+        loan.collateralAmount += collateralAmountToAdd;
+        loans[loanId] = loan;
+
+        emit CollateralAdded(loanId, collateralAmountToAdd);
     }
 
     /**
