@@ -222,6 +222,8 @@ contract Lending is Ownable, ReentrancyGuard {
     function withdraw(address asset, uint256 amount) external nonReentrant nonZeroAmount(amount) poolExists(asset) {
         address lpTokenAddress = pools[asset].lpTokenAddress;
 
+        updatePoolInterestRate(asset);
+
         uint256 totalAssetBalance = IERC20(asset).balanceOf(address(this));
 
         if (amount > totalAssetBalance) {
@@ -265,6 +267,8 @@ contract Lending is Ownable, ReentrancyGuard {
         if (IERC20(asset).balanceOf(address(this)) < amount) {
             revert Lending__NotEnoughLiquidity();
         }
+
+        updatePoolInterestRate(asset);
 
         ///@todo collateral exchange rate to be determined. For now it is set to 1:1
         uint256 scaledCollateralExchangeRate = 100 * SCALING_FACTOR / 100;
@@ -456,6 +460,47 @@ contract Lending is Ownable, ReentrancyGuard {
         loans[loanId] = loan;
 
         return loan.interestDue;
+    }
+
+    /**
+     * @notice Update the interest rate for a given asset pool based on the pool's utilization rate.
+     * @param asset The address of the asset pool
+     */
+    function updatePoolInterestRate(address asset) public poolExists(asset) returns (uint256) {
+        if (pools[asset].lastInterestUpdateTime == block.timestamp) {
+            return pools[asset].scaledInterestRate;
+        }
+
+        uint256 totalBorrowed = pools[asset].totalBorrowed;
+        uint256 totalDeposits = IERC20(asset).balanceOf(address(this)) + totalBorrowed;
+
+        if (totalDeposits == 0) {
+            pools[asset].scaledInterestRate = DEFAULT_SCALED_INTEREST_RATE;
+            return pools[asset].scaledInterestRate;
+        }
+
+        uint256 scaledUtilizationRate = (totalBorrowed * SCALING_FACTOR) / totalDeposits;
+
+        uint256 lowerThreshold = 30 * SCALING_FACTOR / 100;
+        uint256 higherThreshold = 80 * SCALING_FACTOR / 100;
+
+        uint256 lowAdjustmentRate = 10 * SCALING_FACTOR / 100;
+        uint256 highAdjustmentRate = 20 * SCALING_FACTOR / 100;
+
+        if (scaledUtilizationRate < lowerThreshold) {
+            pools[asset].scaledInterestRate =
+                (pools[asset].scaledInterestRate * (SCALING_FACTOR - highAdjustmentRate)) / SCALING_FACTOR;
+        } else if (scaledUtilizationRate > higherThreshold) {
+            pools[asset].scaledInterestRate =
+                (pools[asset].scaledInterestRate * (SCALING_FACTOR + highAdjustmentRate)) / SCALING_FACTOR;
+        } else {
+            pools[asset].scaledInterestRate =
+                (pools[asset].scaledInterestRate * (SCALING_FACTOR + lowAdjustmentRate)) / SCALING_FACTOR;
+        }
+
+        pools[asset].lastInterestUpdateTime = block.timestamp;
+
+        return pools[asset].scaledInterestRate;
     }
 
     /**

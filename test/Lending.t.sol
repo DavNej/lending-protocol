@@ -755,4 +755,42 @@ contract LendingTest is HelperLending {
         assertEq(interestDue, s_lending.getLoan(loanId).interestDue, "Loan interest due not updated");
         assertEq(s_lending.getLoan(loanId).lastUpdateTimestamp, dday, "Last interest update time not updated");
     }
+
+    function testUpdatePoolInterestRate__PoolNotFound() public {
+        vm.expectRevert(Lending.Lending__PoolNotFound.selector);
+        s_lending.updatePoolInterestRate(s_usdc);
+    }
+
+    function testUpdatePoolInterestRate__Default() public {
+        address asset = s_usdc;
+
+        s_lending.createPool(asset);
+        s_lending.updatePoolInterestRate(asset);
+
+        assertEq(
+            s_lending.getPool(asset).scaledInterestRate,
+            s_lending.DEFAULT_SCALED_INTEREST_RATE(),
+            "Interest rate not updated"
+        );
+    }
+
+    //  @todo complete test for updatePoolInterestRate
+    function testSkipUpdatePoolInterestRate__Success() public {
+        address asset = s_usdc;
+        uint256 amountToBorrow = 100 ether;
+        address collateral = s_weth;
+        uint256 collateralAmount = 200 ether;
+
+        fundUserWithToken(ALICE, asset, INITIAL_ALICE_BALANCE);
+        depositFor(ALICE, asset, amountToBorrow);
+        fundUserWithToken(BOB, collateral, INITIAL_BOB_BALANCE);
+
+        uint256 loanId = borrowFor(BOB, asset, amountToBorrow, collateral, collateralAmount);
+
+        vm.startPrank(s_deployer);
+        s_lending.updatePoolInterestRate(asset);
+        vm.stopPrank();
+
+        // assertEq(s_lending.getPool(asset).scaledInterestRate, scaledInterestRate, "Interjest rate not updated");
+    }
 }
