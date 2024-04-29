@@ -20,38 +20,9 @@ import {ILPToken} from "src/interfaces/ILPToken.sol";
 contract Lending is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    uint256 public constant SCALING_FACTOR = 1e18;
-    ///@dev default interest rate 2%
-    uint256 public constant DEFAULT_SCALED_INTEREST_RATE = 2 * SCALING_FACTOR / 100;
-
-    LPTokenFactory lpTokenfactory;
-
-    mapping(address asset => uint256 ratio) private scaledCollateralRatios;
-    mapping(address asset => Pool pool) private pools;
-    mapping(uint256 => Loan) loans;
-    uint256 currLoanId = 1;
-
-    event Borrow(address indexed account, uint256 loanId);
-    event CollateralAdded(uint256 loanId, uint256 amount);
-    event CollateralRemoved(uint256 loanId, uint256 amount);
-    event Deposit(address indexed account, address asset, uint256 amount);
-    event Liquidated(address indexed liquidater, uint256 loanId);
-    event LoanClosed(uint256 loanId);
-    event PoolCreated(address asset, address lpToken);
-    event Repay(uint256 loanId, uint256 amount);
-    event Withdraw(address indexed account, address asset, uint256 amount);
-
-    error Lending__CollateralNotAccepted();
-    error Lending__InsufficientCollateral();
-    error Lending__InsufficientLPTokens();
-    error Lending__LiquidationForbidden();
-    error Lending__LoanNotFound();
-    error Lending__NotEnoughLiquidity();
-    error Lending__PoolAlreadyExists();
-    error Lending__PoolNotFound();
-    error Lending__ZeroAddress();
-    error Lending__ZeroAmount();
-
+    /**
+     * ==================== Type declarations ====================
+     */
     struct Pool {
         address lpTokenAddress;
         uint256 lastInterestUpdateTime;
@@ -70,6 +41,51 @@ contract Lending is Ownable, ReentrancyGuard {
         uint256 scaledBorrowRate;
         uint256 interestDue;
     }
+
+    /**
+     * ==================== State variables ====================
+     */
+    uint256 public constant SCALING_FACTOR = 1e18;
+    ///@dev default interest rate 2%
+    uint256 public constant DEFAULT_SCALED_INTEREST_RATE = 2 * SCALING_FACTOR / 100;
+
+    LPTokenFactory lpTokenfactory;
+
+    mapping(address asset => uint256 ratio) private scaledCollateralRatios;
+    mapping(address asset => Pool pool) private pools;
+    mapping(uint256 => Loan) loans;
+    uint256 currLoanId = 1;
+
+    /**
+     * ==================== Events ====================
+     */
+    event Borrow(address indexed account, uint256 loanId);
+    event CollateralAdded(uint256 loanId, uint256 amount);
+    event CollateralRemoved(uint256 loanId, uint256 amount);
+    event Deposit(address indexed account, address asset, uint256 amount);
+    event Liquidated(address indexed liquidater, uint256 loanId);
+    event LoanClosed(uint256 loanId);
+    event PoolCreated(address asset, address lpToken);
+    event Repay(uint256 loanId, uint256 amount);
+    event Withdraw(address indexed account, address asset, uint256 amount);
+
+    /**
+     * ==================== Errors ====================
+     */
+    error Lending__CollateralNotAccepted();
+    error Lending__InsufficientCollateral();
+    error Lending__InsufficientLPTokens();
+    error Lending__LiquidationForbidden();
+    error Lending__LoanNotFound();
+    error Lending__NotEnoughLiquidity();
+    error Lending__PoolAlreadyExists();
+    error Lending__PoolNotFound();
+    error Lending__ZeroAddress();
+    error Lending__ZeroAmount();
+
+    /**
+     * ==================== Modifiers ====================
+     */
 
     /**
      * @notice Modifier to check if a pool exists for a given asset
@@ -115,9 +131,16 @@ contract Lending is Ownable, ReentrancyGuard {
         _;
     }
 
+    /**
+     * ==================== Constructor ====================
+     */
     constructor() Ownable(msg.sender) {
         lpTokenfactory = new LPTokenFactory();
     }
+
+    /**
+     * ==================== External Functions ====================
+     */
 
     /**
      * @notice Create a new pool for a given asset
@@ -410,28 +433,8 @@ contract Lending is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Get the scaled collateral ratio for a given asset
-     * @param asset address of the token to get the collateral ratio for
+     * ==================== Public Functions ====================
      */
-    function getScaledCollateralRatio(address asset) external view returns (uint256) {
-        return scaledCollateralRatios[asset];
-    }
-
-    /**
-     * @notice Get the pool for a given asset
-     * @param asset address of the token to get the pool for
-     */
-    function getPool(address asset) external view returns (Pool memory) {
-        return pools[asset];
-    }
-
-    /**
-     * @notice retrieve a loan from its ID
-     * @param loanId The ID of the loan to retrieve
-     */
-    function getLoan(uint256 loanId) external view returns (Loan memory) {
-        return loans[loanId];
-    }
 
     /**
      * Calculate interest owed on a loan since its last update and update the values. Interest calculation is linear with a day basis
@@ -454,3 +457,32 @@ contract Lending is Ownable, ReentrancyGuard {
 
         return loan.interestDue;
     }
+
+    /**
+     * ==================== View Functions ====================
+     */
+
+    /**
+     * @notice Get the scaled collateral ratio for a given asset
+     * @param asset address of the token to get the collateral ratio for
+     */
+    function getScaledCollateralRatio(address asset) external view returns (uint256) {
+        return scaledCollateralRatios[asset];
+    }
+    /**
+     * @notice Get the pool for a given asset
+     * @param asset address of the token to get the pool for
+     */
+
+    function getPool(address asset) external view returns (Pool memory) {
+        return pools[asset];
+    }
+
+    /**
+     * @notice retrieve a loan from its ID
+     * @param loanId The ID of the loan to retrieve
+     */
+    function getLoan(uint256 loanId) external view returns (Loan memory) {
+        return loans[loanId];
+    }
+}
